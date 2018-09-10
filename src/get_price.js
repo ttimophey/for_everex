@@ -1,6 +1,6 @@
-var Web3 = require('web3')
-var _ = require('lodash')
-var bigInt = require("big-integer");
+const Web3 = require('web3')
+const bigInt = require("big-integer");
+const Offer = require('./offer')
 const BigNumber = require('bignumber.js');
 
 const web3 = new Web3("https://mainnet.infura.io/v3/908f2e1ab8584432b784572533dd513a");
@@ -35,7 +35,8 @@ const contracts = {
 
 const decimals = {
   "DGD": 9
-}
+};
+
 const contract = new web3.eth.Contract(abi, '0x14fbca95be7e99c15cc2996c6c9d841e54b79425');
 
 const erc20Contracts = {};
@@ -45,47 +46,48 @@ for (const name in contracts) {
 
 const MAX_OFFER_COUNT = 1000;
 
-const keypairRegexp = /([^\/]*)\/([^\/]*)/im
+const keypairRegexp = /([^\/]*)\/([^\/]*)/im;
 
 async function getPairAndCheck(pair) {
-  let match = pair.match(keypairRegexp)
+  let match = pair.match(keypairRegexp);
   if (!match) {
     return false;
   }
   const [_, from, to] = match;
   if (!from || !to || !contracts[from] || !contracts[to]) {
-    return false
+    return false;
   }
   if (await contract.methods.isTokenPairWhitelisted(contracts[from], contracts[to])) {
     const [fromDecimals, toDecimals] = await Promise.all([
       decimals[from] || erc20Contracts[from].methods.decimals().call(),
-      decimals[to] || erc20Contracts[to].methods.decimals().call()
+      decimals[to] || erc20Contracts[to].methods.decimals().call(),
     ]);
     return {
+      text: pair,
       from: contracts[from],
       fromText: from,
       fromDecimals: parseInt(fromDecimals),
       to: contracts[to],
       toDecimals: parseInt(toDecimals),
-      toText: to
+      toText: to,
     }
   }
   return false
 }
 
 async function getLastTakedOrder(pair) {
-  let fromBlock = 6000000;
+  let fromBlock = 6500000;
   let toBlock = 'latest';
-  const step = 500000;
-  let events = await contract.getPastEvents('LogTake', {fromBlock: fromBlock , toBlock: toBlock, filter: {pair: web3.utils.soliditySha3(pair.from, pair.to)}});
+  const step = 50000;
+  let events = (await contract.getPastEvents('LogTake', {fromBlock: fromBlock , toBlock: toBlock, filter: {pair: web3.utils.soliditySha3(pair.to, pair.from)}})).reverse();
   toBlock = fromBlock;
   fromBlock = Math.max(fromBlock - step, 0)
   while (events.length <= 10 && toBlock > 0) {
-    events = events.concat(await contract.getPastEvents('LogTake', {fromBlock: fromBlock , toBlock: toBlock, filter: {pair: web3.utils.soliditySha3(pair.from, pair.to)}}));
+    events = events.concat((await contract.getPastEvents('LogTake', {fromBlock: fromBlock , toBlock: toBlock, filter: {pair: web3.utils.soliditySha3(pair.to, pair.from)}})).reverse());
     toBlock = fromBlock;
     fromBlock = Math.max(fromBlock - step, 0);
   }
-  return events.slice(0, 10);
+  return events.slice(0, 11);
 }
 
 async function getAllOfferForPair(pair) {
@@ -93,14 +95,14 @@ async function getAllOfferForPair(pair) {
   let [getCount, offerId] = await Promise.all(
     [
       contract.methods.getOfferCount(pair.from, pair.to).call(),
-      contract.methods.getBestOffer(pair.from, pair.to).call()
+      contract.methods.getBestOffer(pair.from, pair.to).call(),
     ]);
   let bestOffer;
   let i = MAX_OFFER_COUNT;
   while (i > 0) {
     [bestOffer, nextOfferId] = await Promise.all([
       contract.methods.getOffer(offerId).call(),
-      contract.methods.getWorseOffer(offerId).call()
+      contract.methods.getWorseOffer(offerId).call(),
     ]);
     if (bestOffer[0] === '0') {
       break;
@@ -108,20 +110,12 @@ async function getAllOfferForPair(pair) {
     offers.push({
       pay_amt: bestOffer[0],
       buy_amt: bestOffer[2],
-      id: offerId
+      id: offerId,
     });
     offerId = nextOfferId;
     i--;
   }
   return offers;
-}
-
-async function getLastTransfers() {
-  return
-}
-
-async function a() {
-
 }
 
 function offersToWei(offers, fromDecimals, toDecimals) {
@@ -132,25 +126,28 @@ function offersToWei(offers, fromDecimals, toDecimals) {
   })
 }
 
-async function getAmount(pairText, amount) {
-  pair = await getPairAndCheck(pairText);
+async function getPrice(pairText, amount) {
+  const pair = await getPairAndCheck(pairText);
   if (!pair) {
     return false;
   }
 
-
-  amount = bigInt(Math.pow(10, 18))
+  amount = bigInt(amount).multiply(Math.pow(10, 18));
   const offersRaw = await getAllOfferForPair(pair);
   const offers = offersToWei(offersRaw, pair.fromDecimals, pair.toDecimals)
 
   const allAmount = offers.reduce((acc, val) => acc.add(val.buy_amt), bigInt.zero)
 
   if (amount.geq(allAmount)) {
-    return false;
+    return {
+      price: 0,
+      offers: offersRaw.slice(0, 11).map(o => new Offer(pairText, String(o.pay_amt), String(o.buy_amt))),
+      takes: (await getLastTakedOrder(pair)).map((e) => Offer.createFromTakeEvent(pairText, e)),
+    }
   }
   let price;
   for (let i = 0; i < offers.length; i++) {
-    amount.subtract(offers[i].buy_amt)
+    amount.subtract(offers[i].buy_amt);
     if (amount.geq(0)) {
       price = BigNumber(offers[i].pay_amt.toString()).dividedBy(BigNumber(offers[i].buy_amt.toString()))
       break
@@ -158,33 +155,9 @@ async function getAmount(pairText, amount) {
   }
   return {
     price: price.toString(),
-    offers: offersRaw.slice(0, 11),
-    takes: await getLastTakedOrder(pair)
+    offers: offersRaw.slice(0, 11).map(o => new Offer(pairText, String(o.pay_amt), String(o.buy_amt))),
+    takes: (await getLastTakedOrder(pair)).map((e) => Offer.createFromTakeEvent(pairText, e)),
   }
-
 }
 
-
-(async () => {
-  try {
-    console.log(await getAmount('W-ETH/DGD', 1))
-  } catch (e) {
-    console.log(e)
-  }
-  try {
-    console.log(await getAmount('DGD/W-ETH', 10000))
-  } catch (e) {
-    console.log(e)
-  }
-  try {
-    console.log(await getAmount('MKR/W-ETH', 10000))
-  } catch (e) {
-    console.log(e)
-  }
-  try {
-    console.log(await getAmount('SAI/W-ETH', 10000))
-  } catch (e) {
-    console.log(e)
-  }
-
-})()
+module.exports = getPrice;
