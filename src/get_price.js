@@ -1,6 +1,6 @@
-const Web3 = require('web3')
+const Web3 = require('web3');
 const bigInt = require("big-integer");
-const Offer = require('./offer')
+const Offer = require('./offer');
 const BigNumber = require('bignumber.js');
 
 const web3 = new Web3("https://mainnet.infura.io/v3/908f2e1ab8584432b784572533dd513a");
@@ -46,6 +46,8 @@ for (const name in contracts) {
 
 const MAX_OFFER_COUNT = 1000;
 
+const LAST_CHECK_BLOCK = 6000000;
+
 const keypairRegexp = /([^\/]*)\/([^\/]*)/im;
 
 async function getPairAndCheck(pair) {
@@ -82,7 +84,7 @@ async function getLastTakedOrder(pair) {
   let events = (await contract.getPastEvents('LogTake', {fromBlock: fromBlock , toBlock: toBlock, filter: {pair: web3.utils.soliditySha3(pair.to, pair.from)}})).reverse();
   toBlock = fromBlock;
   fromBlock = Math.max(fromBlock - step, 0)
-  while (events.length <= 10 && toBlock > 0) {
+  while (events.length <= 10 && toBlock > LAST_CHECK_BLOCK) {
     events = events.concat((await contract.getPastEvents('LogTake', {fromBlock: fromBlock , toBlock: toBlock, filter: {pair: web3.utils.soliditySha3(pair.to, pair.from)}})).reverse());
     toBlock = fromBlock;
     fromBlock = Math.max(fromBlock - step, 0);
@@ -90,7 +92,7 @@ async function getLastTakedOrder(pair) {
   return events.slice(0, 11);
 }
 
-async function getAllOfferForPair(pair) {
+async function getAllOfferForPair(pair, atempt = 5) {
   const offers = [];
   let [getCount, offerId] = await Promise.all(
     [
@@ -98,13 +100,20 @@ async function getAllOfferForPair(pair) {
       contract.methods.getBestOffer(pair.from, pair.to).call(),
     ]);
   let bestOffer;
-  let i = MAX_OFFER_COUNT;
+  let i = Math.min(MAX_OFFER_COUNT, getCount);
   while (i > 0) {
     [bestOffer, nextOfferId] = await Promise.all([
       contract.methods.getOffer(offerId).call(),
       contract.methods.getWorseOffer(offerId).call(),
     ]);
     if (bestOffer[0] === '0') {
+      if (i > 0) {
+        if (atempt > 0) {
+          return getAllOfferForPair(pair, --atempt);
+        } else {
+          throw Error('Cant get offers, trades too fast')
+        }
+      }
       break;
     }
     offers.push({
@@ -120,6 +129,7 @@ async function getAllOfferForPair(pair) {
 
 function offersToWei(offers, fromDecimals, toDecimals) {
   return offers.map(v => {
+    v = Object.assign({}, v);
     v.buy_amt = bigInt(v.buy_amt).multiply(Math.pow(10, 18 - toDecimals));
     v.pay_amt = bigInt(v.pay_amt).multiply(Math.pow(10, 18 - fromDecimals));
     return v;
