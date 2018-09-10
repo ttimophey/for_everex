@@ -141,22 +141,22 @@ async function getPrice(pairText, amount) {
   if (amount.geq(allAmount)) {
     return {
       price: 0,
-      offers: offersRaw.slice(0, 11).map(o => new Offer(pairText, String(o.pay_amt), String(o.buy_amt))),
-      takes: (await getLastTakedOrder(pair)).map((e) => Offer.createFromTakeEvent(pairText, e)),
+      offers: offersRaw.slice(0, 11).map(o => new Offer(pair, String(o.pay_amt), String(o.buy_amt))),
+      takes: (await getLastTakedOrder(pair)).map((e) => Offer.createFromTakeEvent(pair, e)),
     }
   }
   let price;
   for (let i = 0; i < offers.length; i++) {
-    amount.subtract(offers[i].buy_amt);
-    if (amount.geq(0)) {
+    amount = amount.subtract(offers[i].buy_amt);
+    if (amount.leq(0)) {
       price = BigNumber(offers[i].pay_amt.toString()).dividedBy(BigNumber(offers[i].buy_amt.toString()))
       break
     }
   }
   return {
     price: price.toString(),
-    offers: offersRaw.slice(0, 11).map(o => new Offer(pairText, String(o.pay_amt), String(o.buy_amt))),
-    takes: (await getLastTakedOrder(pair)).map((e) => Offer.createFromTakeEvent(pairText, e)),
+    offers: offersRaw.slice(0, 11).map(o => new Offer(pair, String(o.pay_amt), String(o.buy_amt))),
+    takes: (await getLastTakedOrder(pair)).map((e) => Offer.createFromTakeEvent(pair, e)),
   }
 }
 
