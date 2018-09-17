@@ -33,6 +33,7 @@ Options:
 	--takes-limit -T    Takes limit [default 10]
 	--max-order   -M    Max order count  [default 1000]
 `);
+		process.exit(0);
 	}
 	if (!pairText) {
 		console.log(util.format(errorTemplates.PARAM_IS_REQUIRED, "--pair"));
