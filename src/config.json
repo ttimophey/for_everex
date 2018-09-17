@@ -1,0 +1,7 @@
+{
+	"oasisAddress": "0x14fbca95be7e99c15cc2996c6c9d841e54b79425",
+	"lastCheckBlock": 6000000,
+	"maxOfferCount": 1000,
+	"eventBlockStep": 50000,
+	"attemptsCount": 5
+}
